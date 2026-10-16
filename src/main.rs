@@ -1,3 +1,4 @@
+mod immich;
 mod settings;
 
 fn main() {
