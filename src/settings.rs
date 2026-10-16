@@ -95,7 +95,9 @@ mod tests {
         let path = Settings::path().unwrap();
         assert_eq!(
             path,
-            PathBuf::from(home).join(".photo-frame").join("settings.toml")
+            PathBuf::from(home)
+                .join(".photo-frame")
+                .join("settings.toml")
         );
     }
 

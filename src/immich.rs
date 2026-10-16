@@ -109,7 +109,10 @@ impl Client {
 
 fn normalize_base(url: &str) -> Result<String, String> {
     let url = url.trim().trim_end_matches('/');
-    let url = url.strip_suffix("/api").unwrap_or(url).trim_end_matches('/');
+    let url = url
+        .strip_suffix("/api")
+        .unwrap_or(url)
+        .trim_end_matches('/');
     if url.is_empty() {
         return Err("Immich URL is empty".to_string());
     }
@@ -231,7 +234,14 @@ mod tests {
         let images = images_from_album(&body).unwrap();
         assert_eq!(
             images,
-            vec![Image { id: "a".to_string() }, Image { id: "c".to_string() }]
+            vec![
+                Image {
+                    id: "a".to_string()
+                },
+                Image {
+                    id: "c".to_string()
+                }
+            ]
         );
     }
 
@@ -263,7 +273,14 @@ mod tests {
         let images = collect_pages(|page| page_from_search(&pages[page as usize - 1])).unwrap();
         assert_eq!(
             images,
-            vec![Image { id: "a".to_string() }, Image { id: "c".to_string() }]
+            vec![
+                Image {
+                    id: "a".to_string()
+                },
+                Image {
+                    id: "c".to_string()
+                }
+            ]
         );
     }
 

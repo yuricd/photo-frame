@@ -1,3 +1,4 @@
+mod cache;
 mod immich;
 mod settings;
 
