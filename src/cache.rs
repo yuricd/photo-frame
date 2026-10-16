@@ -20,7 +20,6 @@ pub fn image_path(dir: &Path, id: &str) -> Result<PathBuf, String> {
 }
 
 /// Decode `bytes`, apply EXIF orientation, cover-crop to 1024×600, and write `{id}.jpg`.
-#[allow(dead_code)] // sync thread writes the cache
 pub fn store_preview(dir: &Path, id: &str, bytes: &[u8]) -> Result<(), String> {
     let path = image_path(dir, id)?;
     let cropped = cover_crop(decode_oriented(bytes)?);
@@ -31,7 +30,6 @@ pub fn store_preview(dir: &Path, id: &str, bytes: &[u8]) -> Result<(), String> {
 /// Delete `{id}.jpg` files whose ids are not in `keep`.
 /// A missing directory is an empty cache. Call this only after a successful album
 /// fetch. A failed fetch must leave the files in place.
-#[allow(dead_code)] // sync thread prunes after a successful album fetch
 pub fn prune(dir: &Path, keep: &HashSet<String>) -> Result<(), String> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,

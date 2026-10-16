@@ -17,7 +17,6 @@ pub struct Client {
     agent: ureq::Agent,
 }
 
-#[allow(dead_code)] // called once the sync thread exists
 impl Client {
     pub fn new(base_url: &str, api_key: &str) -> Result<Self, String> {
         let base_url = normalize_base(base_url)?;
