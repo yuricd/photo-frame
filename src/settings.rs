@@ -39,7 +39,6 @@ impl Settings {
     }
 
     /// `Ok(None)` when the file is missing. That is a first launch, not an error.
-    #[allow(dead_code)] // used once the settings screen exists
     pub fn load() -> Result<Option<Settings>, String> {
         Self::load_from(&Self::path()?)
     }
@@ -55,7 +54,6 @@ impl Settings {
             .map_err(|err| err.to_string())
     }
 
-    #[allow(dead_code)] // used once the settings screen exists
     pub fn save(&self) -> Result<(), String> {
         self.save_to(&Self::path()?)
     }

@@ -10,12 +10,10 @@ use crate::settings::Settings;
 pub const FRAME_WIDTH: u32 = 1024;
 pub const FRAME_HEIGHT: u32 = 600;
 
-#[allow(dead_code)] // slideshow reads this directory
 pub fn images_dir() -> Result<PathBuf, String> {
     Ok(Settings::dir()?.join("images"))
 }
 
-#[allow(dead_code)] // slideshow opens this path
 pub fn image_path(dir: &Path, id: &str) -> Result<PathBuf, String> {
     check_id(id)?;
     Ok(dir.join(format!("{id}.jpg")))
