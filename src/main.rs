@@ -14,7 +14,7 @@ use eframe::egui;
 use settings::Settings;
 
 const FADE: Duration = Duration::from_millis(400);
-const HOLD_SETTINGS: Duration = Duration::from_secs(5);
+const HOLD_SETTINGS: Duration = Duration::from_secs(3);
 const MAX_FIELD_CHARS: usize = 512;
 
 /// Playlist, settings generation, and the last sync error.
@@ -341,24 +341,27 @@ impl PhotoFrame {
     fn slideshow_ui(&mut self, ui: &mut egui::Ui) {
         let screen = ui.max_rect();
         self.paint_slideshow(ui, screen);
-        // Click and drag so a still finger keeps the press through egui's click window.
         let press = ui.interact(
             screen,
             ui.scope_id().with("slide"),
             egui::Sense::click_and_drag(),
         );
-        if press.is_pointer_button_down_on() {
+        let still_down = ui.input(|input| input.pointer.primary_down());
+        let holding =
+            press.is_pointer_button_down_on() || (self.hold_started.is_some() && still_down);
+        if holding {
             self.hold_started.get_or_insert_with(Instant::now);
         }
-        if self
-            .hold_started
-            .is_some_and(|started| started.elapsed() >= HOLD_SETTINGS)
+        if still_down
+            && self
+                .hold_started
+                .is_some_and(|started| started.elapsed() >= HOLD_SETTINGS)
         {
             self.hold_started = None;
             self.open_settings();
             return;
         }
-        if press.is_pointer_button_down_on() {
+        if holding {
             if let Some(started) = self.hold_started {
                 let left = HOLD_SETTINGS.saturating_sub(started.elapsed());
                 ui.ctx().request_repaint_after(left);
