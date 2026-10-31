@@ -883,6 +883,8 @@ impl eframe::App for PhotoFrame {
                 self.settings_ui(ui);
             }
         });
+        // Cage centers a pointer on the screen. Clear it after widgets so none of them restore it.
+        ui.ctx().set_cursor_icon(egui::CursorIcon::None);
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
