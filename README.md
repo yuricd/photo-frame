@@ -14,7 +14,3 @@ Main features:
   - Poll frequency (5 min by default)
 
 The idea is to download the images from the API and save into the frame SD card. The screen is 1024x600, so the download should transform the images taking that into account. To avoid having stale images, we should clean up from time to time to match the IDs that are still available on Immich.
-
-## Next steps
-
-Update software from git

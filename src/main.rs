@@ -1,6 +1,7 @@
 mod cache;
 mod immich;
 mod settings;
+mod update;
 
 use std::collections::HashSet;
 use std::fs;
@@ -35,6 +36,7 @@ struct PhotoFrame {
     focus: Field,
     shift: bool,
     save_error: Option<String>,
+    update: Arc<Mutex<Update>>,
     playlist: Vec<String>,
     index: usize,
     fade: Option<Fade>,
@@ -107,7 +109,14 @@ enum Press {
     Focus(Field),
     Save,
     Back,
+    CheckUpdates,
     Key(Key),
+}
+
+struct Update {
+    busy: bool,
+    text: Option<String>,
+    error: bool,
 }
 
 /// A tap during a fade snaps to that target, then starts the next fade.
@@ -165,6 +174,11 @@ impl PhotoFrame {
             focus: Field::Url,
             shift: false,
             save_error: load_error.or(dir_error),
+            update: Arc::new(Mutex::new(Update {
+                busy: false,
+                text: None,
+                error: false,
+            })),
             playlist,
             index: 0,
             fade: None,
@@ -411,9 +425,14 @@ impl PhotoFrame {
     }
 
     fn settings_ui(&mut self, ui: &mut egui::Ui) {
-        self.apply_keys(ui.ctx());
+        let ctx = ui.ctx().clone();
+        self.apply_keys(&ctx);
         let poll_error = lock(&self.shared).last_error.clone();
         let save_error = self.save_error.clone();
+        let (update_text, update_error, update_busy) = {
+            let update = lock(&self.update);
+            (update.text.clone(), update.error, update.busy)
+        };
         let focus = self.focus;
         let shift = self.shift;
         let draft = self.draft.clone();
@@ -449,6 +468,23 @@ impl PhotoFrame {
                 if let Some(err) = save_error.as_deref().or(poll_error.as_deref()) {
                     ui.colored_label(egui::Color32::from_rgb(220, 90, 90), err);
                 }
+                if ui
+                    .add_enabled(
+                        !update_busy,
+                        egui::Button::new("Check for updates").min_size(egui::vec2(0.0, 44.0)),
+                    )
+                    .clicked()
+                {
+                    press = Some(Press::CheckUpdates);
+                }
+                if update_error {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(220, 90, 90),
+                        update_text.as_deref().unwrap_or(" "),
+                    );
+                } else {
+                    ui.label(update_text.as_deref().unwrap_or(" "));
+                }
                 ui.horizontal(|ui| {
                     if ui
                         .add_sized([140.0, 44.0], egui::Button::new("Save"))
@@ -470,11 +506,11 @@ impl PhotoFrame {
             });
 
         if let Some(press) = press {
-            self.apply_press(press);
+            self.apply_press(&ctx, press);
         }
     }
 
-    fn apply_press(&mut self, press: Press) {
+    fn apply_press(&mut self, ctx: &egui::Context, press: Press) {
         match press {
             Press::Focus(field) => {
                 self.focus = field;
@@ -483,6 +519,7 @@ impl PhotoFrame {
                 }
             }
             Press::Save => self.save_settings(),
+            Press::CheckUpdates => self.start_update(ctx),
             Press::Back => {
                 self.save_error = None;
                 self.screen = Screen::Slideshow;
@@ -532,6 +569,40 @@ impl PhotoFrame {
         self.save_error = None;
         self.screen = Screen::Slideshow;
         self.slide_started = Some(Instant::now());
+    }
+
+    fn start_update(&mut self, ctx: &egui::Context) {
+        {
+            let mut update = lock(&self.update);
+            if update.busy {
+                return;
+            }
+            update.busy = true;
+            update.text = Some("Checking…".to_string());
+            update.error = false;
+        }
+        let update = Arc::clone(&self.update);
+        let ctx = ctx.clone();
+        ctx.request_repaint();
+        if let Err(err) = thread::Builder::new()
+            .name("photo-frame-update".to_string())
+            .spawn(move || {
+                let (text, error) = match update::apply() {
+                    Ok(()) => ("Up to date".to_string(), false),
+                    Err(err) => (err, true),
+                };
+                let mut update = lock(&update);
+                update.busy = false;
+                update.text = Some(text);
+                update.error = error;
+                ctx.request_repaint();
+            })
+        {
+            let mut update = lock(&self.update);
+            update.busy = false;
+            update.text = Some(format!("update thread: {err}"));
+            update.error = true;
+        }
     }
 
     fn apply_keys(&mut self, ctx: &egui::Context) {
@@ -868,7 +939,7 @@ fn wait_for_generation(
     }
 }
 
-fn lock(shared: &Mutex<Shared>) -> MutexGuard<'_, Shared> {
+fn lock<T>(shared: &Mutex<T>) -> MutexGuard<'_, T> {
     shared.lock().unwrap_or_else(|err| err.into_inner())
 }
 
