@@ -9,16 +9,17 @@ use std::time::Duration;
 use serde::Deserialize;
 
 const LATEST_URL: &str = "https://api.github.com/repos/yuricd/photo-frame/releases/latest";
-const ASSET_URL: &str =
-    "https://github.com/yuricd/photo-frame/releases/latest/download/photo-frame-aarch64";
+const ASSET_NAME: &str = "photo-frame-aarch64";
 /// ureq's default cap is 10 MB. The release binary is about 14 MB.
 const BODY_LIMIT: u64 = 32 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-/// Check GitHub for a newer release, replace this executable, then re-exec.
+/// Check GitHub for a newer release, require that release's sha256,
+/// replace this executable, then re-exec.
 /// `Ok` means this build is already current. A successful install does not return.
 pub fn apply() -> Result<(), String> {
-    if !needs_update(&latest_tag()?, env!("CARGO_PKG_VERSION"))? {
+    let release = latest_release()?;
+    if !needs_update(&release.tag_name, env!("CARGO_PKG_VERSION"))? {
         return Ok(());
     }
     if std::env::consts::ARCH != "aarch64" {
@@ -27,14 +28,17 @@ pub fn apply() -> Result<(), String> {
             std::env::consts::ARCH
         ));
     }
-    let bytes = download(ASSET_URL)?;
+    let url = download_url(&release.tag_name)?;
+    let digest = asset_digest(&release.assets)?;
+    let bytes = download(&url)?;
+    check_digest(&bytes, &digest)?;
     let exe = std::env::current_exe().map_err(|err| format!("running executable: {err}"))?;
     install_bytes(&exe, &bytes)?;
     let err = Command::new(&exe).args(std::env::args_os().skip(1)).exec();
     Err(format!("restart: {err}"))
 }
 
-fn latest_tag() -> Result<String, String> {
+fn latest_release() -> Result<GithubRelease, String> {
     let mut response = agent()
         .get(LATEST_URL)
         .header("User-Agent", "photo-frame")
@@ -43,11 +47,10 @@ fn latest_tag() -> Result<String, String> {
             ureq::Error::StatusCode(404) => "no release published".to_string(),
             other => format!("check for updates: {other}"),
         })?;
-    let release: GithubRelease = response
+    response
         .body_mut()
         .read_json()
-        .map_err(|err| format!("check for updates: {err}"))?;
-    Ok(release.tag_name)
+        .map_err(|err| format!("check for updates: {err}"))
 }
 
 fn download(url: &str) -> Result<Vec<u8>, String> {
@@ -78,6 +81,80 @@ fn agent() -> ureq::Agent {
 #[derive(Deserialize)]
 struct GithubRelease {
     tag_name: String,
+    assets: Vec<GithubAsset>,
+}
+
+#[derive(Deserialize)]
+struct GithubAsset {
+    name: String,
+    digest: Option<String>,
+}
+
+/// `v1.2.3` only. The tag is placed in the download path, so anything else is rejected.
+fn release_tag(tag: &str) -> Result<String, String> {
+    let trimmed = tag.trim();
+    if !trimmed.starts_with('v') {
+        return Err(format!("release tag is not a version: {tag}"));
+    }
+    parse_version(trimmed)?;
+    Ok(trimmed.to_string())
+}
+
+fn download_url(tag: &str) -> Result<String, String> {
+    let tag = release_tag(tag)?;
+    Ok(format!(
+        "https://github.com/yuricd/photo-frame/releases/download/{tag}/{ASSET_NAME}"
+    ))
+}
+
+fn asset_digest(assets: &[GithubAsset]) -> Result<String, String> {
+    let mut matches = assets.iter().filter(|asset| asset.name == ASSET_NAME);
+    let asset = matches
+        .next()
+        .ok_or_else(|| format!("release has no {ASSET_NAME}"))?;
+    if matches.next().is_some() {
+        return Err(format!("release lists {ASSET_NAME} more than once"));
+    }
+    let digest = asset
+        .digest
+        .as_deref()
+        .ok_or_else(|| format!("release asset {ASSET_NAME} has no digest"))?;
+    parse_sha256(digest)?;
+    Ok(digest.to_string())
+}
+
+/// `sha256:` plus 64 lowercase hex digits.
+fn parse_sha256(digest: &str) -> Result<&str, String> {
+    let Some(hex) = digest.strip_prefix("sha256:") else {
+        return Err("release digest is not a sha256".to_string());
+    };
+    if hex.len() == 64
+        && hex
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        Ok(hex)
+    } else {
+        Err("release digest is not a sha256".to_string())
+    }
+}
+
+fn check_digest(bytes: &[u8], digest: &str) -> Result<(), String> {
+    let expected = parse_sha256(digest)?;
+    if sha256_hex(bytes) != expected {
+        return Err("download does not match the release digest".to_string());
+    }
+    Ok(())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(bytes);
+    let mut hex = String::with_capacity(hash.len() * 2);
+    for byte in hash {
+        hex.push_str(&format!("{byte:02x}"));
+    }
+    hex
 }
 
 fn needs_update(tag: &str, current: &str) -> Result<bool, String> {
@@ -170,6 +247,96 @@ mod tests {
         assert!(!dir.join("photo-frame.new").exists());
         let mode = fs::metadata(&exe).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o755);
+    }
+
+    #[test]
+    fn download_url_uses_the_release_tag() {
+        let url =
+            "https://github.com/yuricd/photo-frame/releases/download/v1.2.3/photo-frame-aarch64";
+        assert_eq!(download_url("v1.2.3").unwrap(), url);
+        assert_eq!(download_url("  v1.2.3\n").unwrap(), url);
+        for tag in [
+            "1.2.3",
+            "v1.2",
+            "v1.2.3-rc.1",
+            "v1.2.3/photo-frame",
+            "latest",
+            "",
+        ] {
+            assert!(download_url(tag).is_err(), "{tag}");
+        }
+    }
+
+    #[test]
+    fn digest_must_be_sha256() {
+        let hex = "ab".repeat(32);
+        assert_eq!(parse_sha256(&format!("sha256:{hex}")).unwrap(), hex);
+        for digest in [
+            hex.clone(),
+            format!("sha256:{}", "ab".repeat(31)),
+            format!("sha256:{}", "AB".repeat(32)),
+            format!("sha512:{hex}"),
+            "sha256:".to_string(),
+        ] {
+            assert_eq!(
+                parse_sha256(&digest).unwrap_err(),
+                "release digest is not a sha256",
+                "{digest}"
+            );
+        }
+    }
+
+    #[test]
+    fn asset_digest_requires_one_checksum() {
+        let digest = format!("sha256:{}", "cd".repeat(32));
+        let assets = [
+            GithubAsset {
+                name: "notes.txt".to_string(),
+                digest: None,
+            },
+            GithubAsset {
+                name: ASSET_NAME.to_string(),
+                digest: Some(digest.clone()),
+            },
+        ];
+        assert_eq!(asset_digest(&assets).unwrap(), digest);
+        assert_eq!(
+            asset_digest(&[]).unwrap_err(),
+            format!("release has no {ASSET_NAME}")
+        );
+        assert_eq!(
+            asset_digest(&[GithubAsset {
+                name: ASSET_NAME.to_string(),
+                digest: None,
+            }])
+            .unwrap_err(),
+            format!("release asset {ASSET_NAME} has no digest")
+        );
+        assert_eq!(
+            asset_digest(&[
+                GithubAsset {
+                    name: ASSET_NAME.to_string(),
+                    digest: Some(digest.clone()),
+                },
+                GithubAsset {
+                    name: ASSET_NAME.to_string(),
+                    digest: Some(digest),
+                },
+            ])
+            .unwrap_err(),
+            format!("release lists {ASSET_NAME} more than once")
+        );
+    }
+
+    #[test]
+    fn checksum_must_match_the_download() {
+        let digest = "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        check_digest(b"abc", digest).unwrap();
+        let wrong = "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ae";
+        assert_eq!(
+            check_digest(b"abc", wrong).unwrap_err(),
+            "download does not match the release digest"
+        );
     }
 
     #[test]
